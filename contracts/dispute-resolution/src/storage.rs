@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use ads_bazaar_shared::DisputeId;
-use soroban_sdk::{contracttype, Address, Env};
+use soroban_sdk::{contracttype, Address, Env, String};
 
 use crate::error::Error;
 use crate::types::Dispute;
@@ -14,6 +14,7 @@ const PERSISTENT_LIFETIME_THRESHOLD: u32 = 500_000;
 pub enum DataKey {
     Admin,
     EscrowContract,
+    Version,
     NextDisputeId,
     Dispute(DisputeId),
 }
@@ -43,6 +44,17 @@ pub fn get_escrow_contract(env: &Env) -> Result<Address, Error> {
     env.storage()
         .instance()
         .get(&DataKey::EscrowContract)
+        .ok_or(Error::NotInitialized)
+}
+
+pub fn set_version(env: &Env, version: &String) {
+    env.storage().instance().set(&DataKey::Version, version);
+}
+
+pub fn get_version(env: &Env) -> Result<String, Error> {
+    env.storage()
+        .instance()
+        .get(&DataKey::Version)
         .ok_or(Error::NotInitialized)
 }
 

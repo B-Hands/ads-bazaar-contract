@@ -5,7 +5,7 @@
 #![allow(dead_code)]
 
 use ads_bazaar_shared::DisputeId;
-use soroban_sdk::{contractevent, Address};
+use soroban_sdk::{contractevent, Address, BytesN};
 
 #[contractevent]
 #[derive(Clone, Debug)]
@@ -21,4 +21,10 @@ pub struct DisputeRaised {
 pub struct DisputeResolved {
     #[topic]
     pub dispute_id: DisputeId,
+}
+
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct ContractUpgraded {
+    pub new_wasm_hash: BytesN<32>,
 }

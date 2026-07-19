@@ -23,7 +23,12 @@ pub use error::Error;
 pub use types::{Application, Campaign, ProtocolConfig};
 
 use ads_bazaar_shared::{CampaignId, PayoutAsset};
-use soroban_sdk::{contract, contractimpl, Address, Env, String};
+use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, String};
+
+/// Version string stored at `initialize` time. `upgrade` swaps the WASM
+/// binary but does not bump this on its own — see the TODO on `upgrade`
+/// below.
+const INITIAL_VERSION: &str = "0.1.0";
 
 #[contract]
 pub struct CampaignEscrowContract;
@@ -57,6 +62,7 @@ impl CampaignEscrowContract {
         storage::set_treasury(&env, &admin);
         storage::set_dispute_contract(&env, &dispute_contract);
         storage::set_fee_bps(&env, fee_bps);
+        storage::set_version(&env, &String::from_str(&env, INITIAL_VERSION));
         Ok(())
     }
 
@@ -250,6 +256,31 @@ impl CampaignEscrowContract {
             treasury,
             fee_bps,
         })
+    }
+
+    /// Read-only lookup of the WASM version string set at `initialize`.
+    pub fn version(env: Env) -> Result<String, Error> {
+        storage::get_version(&env)
+    }
+
+    /// Replace this contract's WASM binary in place via Soroban's native
+    /// upgrade mechanism, preserving the contract address and all existing
+    /// storage. Admin-only.
+    ///
+    /// TODO(contributors): this does not bump the stored `Version` — decide
+    /// whether `upgrade` should take a new version string to persist, or
+    /// whether version tracking should be derived from the wasm hash instead.
+    pub fn upgrade(env: Env, admin: Address, new_wasm_hash: BytesN<32>) -> Result<(), Error> {
+        admin.require_auth();
+        let stored_admin = storage::get_admin(&env)?;
+        if admin != stored_admin {
+            return Err(Error::Unauthorized);
+        }
+
+        env.deployer()
+            .update_current_contract_wasm(new_wasm_hash.clone());
+        events::ContractUpgraded { new_wasm_hash }.publish(&env);
+        Ok(())
     }
 }
 

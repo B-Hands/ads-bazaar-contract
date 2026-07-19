@@ -8,7 +8,7 @@
 #![allow(dead_code)]
 
 use ads_bazaar_shared::CampaignId;
-use soroban_sdk::{contractevent, Address};
+use soroban_sdk::{contractevent, Address, BytesN};
 
 #[contractevent]
 #[derive(Clone, Debug)]
@@ -70,4 +70,10 @@ pub struct CampaignCancelled {
     #[topic]
     pub campaign_id: CampaignId,
     pub refunded_amount: i128,
+}
+
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct ContractUpgraded {
+    pub new_wasm_hash: BytesN<32>,
 }
