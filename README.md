@@ -158,9 +158,9 @@ pub struct PayoutAsset {
 ### Prerequisites
 
 - [Rust](https://rustup.rs/) — toolchain and wasm targets (`wasm32-unknown-unknown`, `wasm32v1-none`) are pinned in `rust-toolchain.toml` and installed automatically by `rustup`
-- [Stellar CLI](https://developers.stellar.org/docs/tools/cli/install-cli) (`stellar`) for building and deploying contracts
+- [Stellar CLI](https://developers.stellar.org/docs/tools/cli/install-cli) (`stellar`) `>= 22.0.0` for building, optimizing, deploying, and invoking contracts
 
-### Commands
+### Build & test
 
 ```bash
 # run all unit tests
@@ -174,13 +174,77 @@ cargo fmt --all
 stellar contract build
 ```
 
-Deploy with the Stellar CLI once your network profile and account are configured:
+### Deploy to testnet
+
+1. Fund a Stellar testnet account (for the deployer and, if you want a
+   separate admin, a second one) via
+   [friendbot](https://developers.stellar.org/docs/tools/quickstart#fund-your-account),
+   and generate keys with `stellar keys generate`.
+2. Copy the env template and fill in your keys:
+
+   ```bash
+   cp .env.example .env
+   ```
+
+3. Run the deploy script:
+
+   ```bash
+   ./deploy.sh
+   ```
+
+   This builds and optimizes both contract wasms, deploys
+   `campaign-escrow` and `dispute-resolution`, initializes each with the
+   other's address (so the dispute hooks can authenticate each other),
+   and appends the resulting contract IDs to `.env.testnet`.
+
+#### Manual invocation examples
+
+Once deployed (`$ESCROW_ID` / `$DISPUTE_ID` from `.env.testnet`, `$BUSINESS_SECRET` / `$CREATOR_SECRET` / `$TOKEN_ID` from your own testnet setup):
 
 ```bash
-stellar contract deploy \
-  --wasm target/wasm32v1-none/release/ads_bazaar_campaign_escrow.wasm \
-  --source <account> --network testnet
+# Business creates a draft campaign
+stellar contract invoke --id "$ESCROW_ID" --source "$BUSINESS_SECRET" --network testnet \
+  -- create_campaign \
+  --business "$BUSINESS_ADDRESS" \
+  --asset '{"token":"'"$TOKEN_ID"'","symbol":"USDC"}' \
+  --total_budget 1000000 \
+  --max_creators 5 \
+  --application_deadline 1750000000 \
+  --completion_deadline 1752000000 \
+  --metadata_uri "ipfs://brief"
+
+# Business funds the campaign (transfers total_budget into escrow)
+stellar contract invoke --id "$ESCROW_ID" --source "$BUSINESS_SECRET" --network testnet \
+  -- fund_campaign --business "$BUSINESS_ADDRESS" --campaign_id 0
+
+# Creator applies
+stellar contract invoke --id "$ESCROW_ID" --source "$CREATOR_SECRET" --network testnet \
+  -- apply_to_campaign --creator "$CREATOR_ADDRESS" --campaign_id 0 --pitch_uri "ipfs://pitch"
+
+# Business approves the creator and sets their payout
+stellar contract invoke --id "$ESCROW_ID" --source "$BUSINESS_SECRET" --network testnet \
+  -- approve_creator --business "$BUSINESS_ADDRESS" --campaign_id 0 \
+  --creator "$CREATOR_ADDRESS" --payout_amount 200000
+
+# Creator submits proof of completed work
+stellar contract invoke --id "$ESCROW_ID" --source "$CREATOR_SECRET" --network testnet \
+  -- submit_proof --creator "$CREATOR_ADDRESS" --campaign_id 0 --proof_uri "ipfs://proof"
+
+# Business releases payment (creator receives payout minus platform fee)
+stellar contract invoke --id "$ESCROW_ID" --source "$BUSINESS_SECRET" --network testnet \
+  -- release_payment --business "$BUSINESS_ADDRESS" --campaign_id 0 --creator "$CREATOR_ADDRESS"
+
+# Read-only lookup
+stellar contract invoke --id "$ESCROW_ID" --source "$BUSINESS_SECRET" --network testnet \
+  -- get_campaign --campaign_id 0
 ```
+
+#### Contract addresses
+
+| Network | campaign-escrow | dispute-resolution |
+| --- | --- | --- |
+| Testnet | _fill in after first `./deploy.sh` run_ | _fill in after first `./deploy.sh` run_ |
+| Mainnet | not yet deployed | not yet deployed |
 
 ---
 

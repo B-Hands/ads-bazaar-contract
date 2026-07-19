@@ -7,3 +7,8 @@ test_snapshots/
 .vscode/*
 !.vscode/extensions.json
 *.log
+.env
+.env.testnet
+.env.futurenet
+.env.mainnet
+!.env.example
