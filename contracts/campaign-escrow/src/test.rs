@@ -173,6 +173,41 @@ fn unpause_allows_call_past_guard() {
     env.mock_all_auths();
     let (client, admin, dispute_contract) = setup(&env);
     client.initialize(&admin, &dispute_contract, &250);
+
+    let business = Address::generate(&env);
+    let malicious = Address::generate(&env);
+    let token_addr = Address::generate(&env);
+
+    let asset = ads_bazaar_shared::PayoutAsset {
+        token: token_addr,
+        symbol: String::from_str(&env, "USDC"),
+    };
+
+    let campaign_id = 1;
+    let campaign = Campaign {
+        id: campaign_id,
+        business: business.clone(),
+        asset,
+        total_budget: 1_000_000,
+        escrow_balance: 1_000_000,
+        max_creators: 5,
+        approved_count: 0,
+        application_deadline: env.ledger().timestamp() + 86_400,
+        completion_deadline: env.ledger().timestamp() + 604_800,
+        metadata_uri: String::from_str(&env, "ipfs://brief"),
+        status: ads_bazaar_shared::CampaignStatus::Funded,
+    };
+
+    env.as_contract(&client.address, || {
+        storage::set_campaign(&env, &campaign);
+    });
+
+    let res = client.try_cancel_campaign(&malicious, &campaign_id);
+    assert_eq!(res, Err(Ok(Error::NotCampaignOwner)));
+}
+
+#[test]
+fn test_cancel_draft_campaign_success() {
     client.pause(&admin);
     client.unpause(&admin);
     assert!(!client.is_paused());
@@ -205,6 +240,40 @@ fn non_admin_cannot_pause() {
     let (client, admin, dispute_contract) = setup(&env);
     client.initialize(&admin, &dispute_contract, &250);
 
+    let business = Address::generate(&env);
+    let token_addr = Address::generate(&env);
+    let asset = ads_bazaar_shared::PayoutAsset {
+        token: token_addr,
+        symbol: String::from_str(&env, "USDC"),
+    };
+
+    let campaign_id = 1;
+    let campaign = Campaign {
+        id: campaign_id,
+        business: business.clone(),
+        asset,
+        total_budget: 1_000_000,
+        escrow_balance: 0,
+        max_creators: 5,
+        approved_count: 0,
+        application_deadline: env.ledger().timestamp() + 86_400,
+        completion_deadline: env.ledger().timestamp() + 604_800,
+        metadata_uri: String::from_str(&env, "ipfs://brief"),
+        status: ads_bazaar_shared::CampaignStatus::Draft,
+    };
+
+    env.as_contract(&client.address, || {
+        storage::set_campaign(&env, &campaign);
+    });
+
+    client.cancel_campaign(&business, &campaign_id);
+
+    let updated_campaign = client.get_campaign(&campaign_id);
+    assert_eq!(
+        updated_campaign.status,
+        ads_bazaar_shared::CampaignStatus::Cancelled
+    );
+    assert_eq!(updated_campaign.escrow_balance, 0);
     let not_admin = Address::generate(&env);
     let result = client.try_pause(&not_admin);
     assert_eq!(result, Err(Ok(Error::Unauthorized)));

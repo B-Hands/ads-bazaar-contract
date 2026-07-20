@@ -238,7 +238,6 @@ impl CampaignEscrowContract {
     /// TODO(contributors): implement. Decide whether cancellation is allowed
     /// once creators are already approved/active, and if so how their
     /// pending payouts are handled.
-    #[allow(unused_variables)]
     pub fn cancel_campaign(
         env: Env,
         business: Address,
@@ -246,7 +245,38 @@ impl CampaignEscrowContract {
     ) -> Result<(), Error> {
         require_not_paused(&env)?;
         business.require_auth();
-        todo!("design + implement cancellation/refund — see doc comment above")
+
+        let mut campaign = storage::get_campaign(&env, campaign_id)?;
+        if campaign.business != business {
+            return Err(Error::NotCampaignOwner);
+        }
+        if campaign.status != ads_bazaar_shared::CampaignStatus::Funded
+            && campaign.status != ads_bazaar_shared::CampaignStatus::Draft
+        {
+            return Err(Error::CampaignClosed);
+        }
+
+        let refunded_amount = campaign.escrow_balance;
+
+        campaign.status = ads_bazaar_shared::CampaignStatus::Cancelled;
+        campaign.escrow_balance = 0;
+        storage::set_campaign(&env, &campaign);
+
+        if refunded_amount > 0 {
+            soroban_sdk::token::Client::new(&env, &campaign.asset.token).transfer(
+                &env.current_contract_address(),
+                &business,
+                &refunded_amount,
+            );
+        }
+
+        events::CampaignCancelled {
+            campaign_id,
+            refunded_amount,
+        }
+        .publish(&env);
+
+        Ok(())
     }
 
     /// Freeze a campaign's escrow so funds cannot be released while a
