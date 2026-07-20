@@ -207,6 +207,33 @@ mod test_happy_path {
     }
 
     #[test]
+    fn approve_two_distinct_creators() {
+        let (env, contract_id) = setup_env();
+        let (client, _admin, _dispute, business, token) = bootstrap(&env, &contract_id, 50);
+        let id = create_funded_campaign(&env, &client, &business, &token, 10_000_000, 5);
+
+        let creator_a = Address::generate(&env);
+        let creator_b = Address::generate(&env);
+
+        client.apply_to_campaign(
+            &creator_a,
+            &id,
+            &soroban_sdk::String::from_str(&env, "pitch-a"),
+        );
+        client.apply_to_campaign(
+            &creator_b,
+            &id,
+            &soroban_sdk::String::from_str(&env, "pitch-b"),
+        );
+
+        client.approve_creator(&business, &id, &creator_a, &1_000_000);
+        client.approve_creator(&business, &id, &creator_b, &1_000_000);
+
+        let campaign = client.get_campaign(&id);
+        assert_eq!(campaign.approved_count, 2);
+    }
+
+    #[test]
     fn fee_calculation_50bps() {
         let (env, contract_id) = setup_env();
         let (client, admin, _dispute, business, token) = bootstrap(&env, &contract_id, 50);
