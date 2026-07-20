@@ -20,8 +20,8 @@ mod types;
 pub use error::Error;
 pub use types::{Application, Campaign, ProtocolConfig};
 
-use ads_bazaar_shared::{CampaignId, PayoutAsset};
-use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, String};
+use ads_bazaar_shared::{ApplicationStatus, CampaignId, CampaignStatus, PayoutAsset};
+use soroban_sdk::{contract, contractimpl, token, Address, BytesN, Env, String};
 
 /// Version string stored at `initialize` time. `upgrade` swaps the WASM
 /// binary but does not bump this on its own — see the TODO on `upgrade`
@@ -128,6 +128,7 @@ impl CampaignEscrowContract {
         completion_deadline: u64,
         metadata_uri: String,
     ) -> Result<CampaignId, Error> {
+        require_not_paused(&env)?;
         if !storage::is_initialized(&env) {
             return Err(Error::NotInitialized);
         }
@@ -166,8 +167,6 @@ impl CampaignEscrowContract {
         }
         .publish(&env);
         Ok(id)
-        require_not_paused(&env)?;
-        todo!("design + implement campaign creation — see doc comment above")
     }
 
     /// Transfer `campaign.total_budget` of `campaign.asset.token` from
@@ -361,6 +360,7 @@ impl CampaignEscrowContract {
         campaign_id: CampaignId,
         creator: Address,
     ) -> Result<(), Error> {
+        require_not_paused(&env)?;
         business.require_auth();
         let campaign = storage::get_campaign(&env, campaign_id)?;
         if campaign.business != business {
@@ -383,6 +383,7 @@ impl CampaignEscrowContract {
     /// submission is approved, or automatically once the content deadline has
     /// passed (auto-approval).
     pub fn claim_payment(env: Env, creator: Address, campaign_id: CampaignId) -> Result<(), Error> {
+        require_not_paused(&env)?;
         creator.require_auth();
         let mut campaign = storage::get_campaign(&env, campaign_id)?;
 
@@ -436,12 +437,6 @@ impl CampaignEscrowContract {
     /// of the escrow to the business. Allowed at any point before full payout
     /// completion. Payouts already committed to approved creators remain
     /// reserved and can still be claimed via `claim_payment` afterward.
-    /// Cancel a campaign and refund any remaining escrow balance to the
-    /// business.
-    ///
-    /// TODO(contributors): implement. Decide whether cancellation is allowed
-    /// once creators are already approved/active, and if so how their
-    /// pending payouts are handled.
     pub fn cancel_campaign(
         env: Env,
         business: Address,
@@ -493,8 +488,8 @@ impl CampaignEscrowContract {
         business: Address,
         campaign_id: CampaignId,
     ) -> Result<(), Error> {
+        require_not_paused(&env)?;
         business.require_auth();
-
         let mut campaign = storage::get_campaign(&env, campaign_id)?;
         if campaign.business != business {
             return Err(Error::NotCampaignOwner);
@@ -541,6 +536,7 @@ impl CampaignEscrowContract {
         business: Address,
         campaign_id: CampaignId,
     ) -> Result<(), Error> {
+        require_not_paused(&env)?;
         business.require_auth();
         let mut campaign = storage::get_campaign(&env, campaign_id)?;
         if campaign.business != business {
@@ -573,32 +569,6 @@ impl CampaignEscrowContract {
             refunded_amount: surplus,
         }
         .publish(&env);
-        if campaign.status != ads_bazaar_shared::CampaignStatus::Funded
-            && campaign.status != ads_bazaar_shared::CampaignStatus::Draft
-        {
-            return Err(Error::CampaignClosed);
-        }
-
-        let refunded_amount = campaign.escrow_balance;
-
-        campaign.status = ads_bazaar_shared::CampaignStatus::Cancelled;
-        campaign.escrow_balance = 0;
-        storage::set_campaign(&env, &campaign);
-
-        if refunded_amount > 0 {
-            soroban_sdk::token::Client::new(&env, &campaign.asset.token).transfer(
-                &env.current_contract_address(),
-                &business,
-                &refunded_amount,
-            );
-        }
-
-        events::CampaignCancelled {
-            campaign_id,
-            refunded_amount,
-        }
-        .publish(&env);
-
         Ok(())
     }
 
