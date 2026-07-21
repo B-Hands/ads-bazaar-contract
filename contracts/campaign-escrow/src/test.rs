@@ -671,6 +671,26 @@ mod test_deadline_enforcement {
     }
 
     #[test]
+    fn create_with_equal_deadlines() {
+        let (env, contract_id) = setup_env();
+        let (client, _admin, _dispute, business, token) = bootstrap(&env, &contract_id, 50);
+
+        let now = env.ledger().timestamp();
+        let deadline = now + 300;
+        let asset = usdc(&env, &token);
+        let result = client.try_create_campaign(
+            &business,
+            &asset,
+            &10_000_000,
+            &5,
+            &deadline,
+            &deadline,
+            &String::from_str(&env, "ipfs://brief"),
+        );
+        assert_eq!(result, Err(Ok(Error::InvalidDeadlineOrder)));
+    }
+
+    #[test]
     fn expire_before_deadline() {
         let (env, contract_id) = setup_env();
         let (client, _admin, _dispute, business, token) = bootstrap(&env, &contract_id, 50);

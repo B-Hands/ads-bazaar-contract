@@ -34,4 +34,6 @@ pub enum Error {
     /// Returned by any guarded state-changing function while the contract
     /// is paused via `pause`. See `require_not_paused` in `lib.rs`.
     ContractPaused = 19,
+    /// The application deadline is not before the completion deadline.
+    InvalidDeadlineOrder = 20,
 }

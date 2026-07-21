@@ -140,7 +140,7 @@ impl CampaignEscrowContract {
             return Err(Error::DeadlineInPast);
         }
         if application_deadline >= completion_deadline {
-            return Err(Error::InvalidAmount);
+            return Err(Error::InvalidDeadlineOrder);
         }
 
         business.require_auth();
