@@ -183,6 +183,9 @@ impl CampaignEscrowContract {
             total_budget,
             escrow_balance: 0,
             committed_payouts: 0,
+            // Snapshotted at creation so a later admin fee change (see
+            // `update_fee_bps`) doesn't retroactively affect this campaign.
+            fee_bps: storage::get_fee_bps(&env)?,
             max_creators,
             approved_count: 0,
             application_deadline,
@@ -427,7 +430,10 @@ impl CampaignEscrowContract {
             return Err(Error::SubmissionNotPayable);
         }
 
-        let fee_bps = storage::get_fee_bps(&env)?;
+        // Use the fee snapshotted at campaign creation, not the current
+        // instance value — an admin fee change (`update_fee_bps`) must not
+        // retroactively affect a campaign's already-agreed payouts.
+        let fee_bps = campaign.fee_bps;
         let fee = application
             .payout_amount
             .checked_mul(fee_bps)

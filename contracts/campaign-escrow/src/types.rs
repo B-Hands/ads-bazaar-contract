@@ -64,4 +64,3 @@ pub struct ProtocolConfig {
     pub treasury: Address,
     pub fee_bps: i128,
 }
-

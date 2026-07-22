@@ -835,6 +835,9 @@ mod admin_updates {
 
         let creator = Address::generate(&env);
         let gross: i128 = 1_000_000;
+        // Created while the global fee is still 50 bps — `fee_bps` is
+        // snapshotted onto the campaign here (see #12) and must not change
+        // even after the fee is updated below.
         let id = create_funded_campaign(&env, &client, &business, &token, 10_000_000, 5);
 
         // Update fee from 50 to 200 bps
@@ -844,10 +847,12 @@ mod admin_updates {
         let new_treasury = Address::generate(&env);
         client.update_treasury(&admin, &new_treasury);
 
-        // Verify config updated
+        // Verify config updated — this reflects the live/global value used
+        // by future campaigns, not this already-created one.
         let config = client.get_protocol_config();
         assert_eq!(config.fee_bps, 200);
         assert_eq!(config.treasury, new_treasury);
+        assert_eq!(client.get_campaign(&id).fee_bps, 50);
 
         // Run through to claim
         client.apply_to_campaign(&creator, &id, &soroban_sdk::String::from_str(&env, "pitch"));
@@ -863,11 +868,41 @@ mod admin_updates {
         let creator_after = token_client.balance(&creator);
         let treasury_after = token_client.balance(&new_treasury);
 
-        let expected_fee = (gross * 200) / 10_000;
+        // The payout uses the 50 bps snapshotted at creation, not the 200
+        // bps the fee was later updated to — but the fee still lands at the
+        // *new* treasury address, since treasury isn't snapshotted per campaign.
+        let expected_fee = (gross * 50) / 10_000;
         let expected_net = gross - expected_fee;
 
         assert_eq!(treasury_after - treasury_before, expected_fee);
         assert_eq!(creator_after - creator_before, expected_net);
+    }
+
+    #[test]
+    fn new_campaign_uses_updated_fee() {
+        let (env, contract_id) = setup_env();
+        let (client, admin, _dispute, business, token) = bootstrap(&env, &contract_id, 50);
+        let token_client = TokenClient::new(&env, &token);
+
+        client.update_fee_bps(&admin, &200);
+
+        let creator = Address::generate(&env);
+        let gross: i128 = 1_000_000;
+        // Created after the update — should snapshot 200 bps, not 50.
+        let id = create_funded_campaign(&env, &client, &business, &token, 10_000_000, 5);
+        assert_eq!(client.get_campaign(&id).fee_bps, 200);
+
+        client.apply_to_campaign(&creator, &id, &soroban_sdk::String::from_str(&env, "pitch"));
+        client.approve_creator(&business, &id, &creator, &gross);
+        client.submit_proof(&creator, &id, &soroban_sdk::String::from_str(&env, "proof"));
+        client.approve_submission(&business, &id, &creator);
+
+        let creator_before = token_client.balance(&creator);
+        client.claim_payment(&creator, &id);
+        let creator_after = token_client.balance(&creator);
+
+        let expected_fee = (gross * 200) / 10_000;
+        assert_eq!(creator_after - creator_before, gross - expected_fee);
     }
 
     #[test]
