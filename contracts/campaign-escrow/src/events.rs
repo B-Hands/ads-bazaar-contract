@@ -80,7 +80,6 @@ pub struct SurplusReclaimed {
     pub amount: i128,
 }
 
-
 /// Emitted by `pause`. Already wired up (unlike most events above, which
 /// are still waiting on their corresponding `todo!()` handlers).
 #[contractevent]
