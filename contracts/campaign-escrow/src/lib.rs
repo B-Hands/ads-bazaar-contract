@@ -564,9 +564,9 @@ impl CampaignEscrowContract {
             campaign.status = CampaignStatus::Completed;
         }
         storage::set_campaign(&env, &campaign);
-        events::CampaignCancelled {
+        events::SurplusReclaimed {
             campaign_id,
-            refunded_amount: surplus,
+            amount: surplus,
         }
         .publish(&env);
         Ok(())
