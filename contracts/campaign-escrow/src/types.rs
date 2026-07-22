@@ -9,6 +9,8 @@ use soroban_sdk::{contracttype, Address, String};
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Campaign {
+    /// Platform fee in basis points, snapshotted at campaign creation so admin changes don't affect live campaigns.
+    pub fee_bps: i128,
     pub id: CampaignId,
     pub business: Address,
     pub asset: PayoutAsset,
@@ -62,3 +64,4 @@ pub struct ProtocolConfig {
     pub treasury: Address,
     pub fee_bps: i128,
 }
+
