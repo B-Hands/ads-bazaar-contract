@@ -46,6 +46,11 @@ pub struct Application {
     pub payout_amount: i128,
     /// Whether the business has accepted the submitted proof (making it payable).
     pub proof_approved: bool,
+    /// Set by `freeze_for_dispute` while the `dispute-resolution` contract is
+    /// arbitrating this payout. Freezing is per-application rather than per-
+    /// campaign so one contested creator doesn't block payouts to every other
+    /// creator on the same campaign. Cleared by `resolve_dispute_payout`.
+    pub frozen: bool,
     pub status: ApplicationStatus,
 }
 

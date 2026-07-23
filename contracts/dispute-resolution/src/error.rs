@@ -13,4 +13,8 @@ pub enum Error {
     Unauthorized = 3,
     DisputeNotFound = 4,
     InvalidStatus = 5,
+    /// A dispute over this `(campaign_id, creator)` payout is already open.
+    DisputeAlreadyRaised = 6,
+    /// `reason_uri` must be non-empty — an arbiter needs something to review.
+    InvalidReason = 7,
 }

@@ -10,6 +10,7 @@
 #![no_std]
 
 mod error;
+mod escrow;
 mod events;
 mod storage;
 mod types;
@@ -17,7 +18,7 @@ mod types;
 pub use error::Error;
 pub use types::Dispute;
 
-use ads_bazaar_shared::{CampaignId, DisputeId, DisputeOutcome};
+use ads_bazaar_shared::{CampaignId, DisputeId, DisputeOutcome, DisputeStatus};
 use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, String};
 
 /// Version string stored at `initialize` time. `upgrade` swaps the WASM
@@ -46,14 +47,29 @@ impl DisputeResolutionContract {
         Ok(())
     }
 
-    /// Raise a dispute over a creator's payout on a given campaign.
+    /// Raise a dispute over a creator's payout on a given campaign, freezing
+    /// that payout in escrow so it can't be claimed mid-review.
     ///
-    /// TODO(contributors): implement. Should call
-    /// `campaign_escrow::Client::freeze_for_dispute` on the configured
-    /// escrow contract once that hook exists, so funds can't be released
-    /// mid-dispute. Decide who may raise a dispute (business, creator, or
-    /// both) and whether there's a time window after proof submission.
-    #[allow(unused_variables)]
+    /// **Who may raise.** Either side of the contested payout: the `creator`
+    /// themselves, or the campaign's business. Both need it — a creator
+    /// disputes a business that won't approve delivered work, and a business
+    /// disputes a creator about to be auto-approved past the content
+    /// deadline. Business ownership lives in `campaign-escrow`, so it is
+    /// verified with a cross-contract read rather than trusted from the
+    /// caller. `raised_by == creator` needs no such read: escrow's
+    /// `freeze_for_dispute` refuses a campaign/creator pair with no
+    /// settleable application, so a stranger can't name themselves creator on
+    /// a campaign they never worked.
+    ///
+    /// **Time window.** There is deliberately none. This contract can't see
+    /// proof-submission timestamps, and the bound that actually protects
+    /// funds is "before the payout is claimed" — which escrow already
+    /// enforces by refusing to freeze an already-`Paid` application. A
+    /// deadline expressed in days would only add a second, weaker rule.
+    ///
+    /// **Repeat disputes.** One open dispute per `(campaign_id, creator)`.
+    /// A second attempt fails with `Error::DisputeAlreadyRaised` rather than
+    /// re-freezing an already-frozen payout.
     pub fn raise_dispute(
         env: Env,
         raised_by: Address,
@@ -62,7 +78,46 @@ impl DisputeResolutionContract {
         reason_uri: String,
     ) -> Result<DisputeId, Error> {
         raised_by.require_auth();
-        todo!("design + implement dispute raising — see doc comment above")
+        if reason_uri.is_empty() {
+            return Err(Error::InvalidReason);
+        }
+        if storage::get_open_dispute(&env, campaign_id, &creator).is_some() {
+            return Err(Error::DisputeAlreadyRaised);
+        }
+
+        let escrow = escrow::CampaignEscrowClient::new(&env, &storage::get_escrow_contract(&env)?);
+        if raised_by != creator && raised_by != escrow.get_campaign_business(&campaign_id) {
+            return Err(Error::Unauthorized);
+        }
+
+        // Freeze first: if escrow refuses (no application, already paid) the
+        // whole invocation traps and no dispute record is left behind.
+        escrow.freeze_for_dispute(&campaign_id, &creator);
+
+        let dispute_id = storage::next_dispute_id(&env);
+        storage::set_dispute(
+            &env,
+            dispute_id,
+            &Dispute {
+                campaign_id,
+                creator: creator.clone(),
+                raised_by: raised_by.clone(),
+                reason_uri,
+                arbiter: None,
+                status: DisputeStatus::Raised,
+                outcome: DisputeOutcome::Pending,
+                raised_at: env.ledger().timestamp(),
+                resolved_at: None,
+            },
+        );
+        storage::set_open_dispute(&env, campaign_id, &creator, dispute_id);
+
+        events::DisputeRaised {
+            dispute_id,
+            raised_by,
+        }
+        .publish(&env);
+        Ok(dispute_id)
     }
 
     /// Assign an arbiter to review a raised dispute.

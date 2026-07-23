@@ -29,7 +29,9 @@ types instead of drifting apart.
   interface: `campaign-escrow::freeze_for_dispute` /
   `resolve_dispute_payout`, callable only by the configured
   `dispute_contract` address, and `dispute-resolution` calling back into
-  escrow once a dispute resolves. Both hooks are currently `todo!()`.
+  escrow once a dispute resolves. `freeze_for_dispute` is implemented (a
+  per-application freeze wired up by `raise_dispute`); `resolve_dispute_payout`
+  is still `todo!()`.
 
 ## Multi-currency design
 
@@ -58,8 +60,10 @@ logic for the core flows is left as `todo!()`:
 | `create_campaign`, `fund_campaign` | `todo!()` |
 | `apply_to_campaign`, `approve_creator`, `submit_proof` | `todo!()` |
 | `release_payment`, `cancel_campaign` | `todo!()` |
-| `freeze_for_dispute`, `resolve_dispute_payout` | `todo!()` |
-| `raise_dispute`, `assign_arbiter`, `resolve_dispute` | `todo!()` |
+| `freeze_for_dispute` | Implemented |
+| `resolve_dispute_payout` | `todo!()` |
+| `raise_dispute` | Implemented |
+| `assign_arbiter`, `resolve_dispute` (dispute-resolution) | `todo!()` |
 
 Each `todo!()` has a doc comment directly above it describing the intended
 behavior and the open design questions it depends on — start there.

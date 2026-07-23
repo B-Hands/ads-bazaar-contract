@@ -19,3 +19,8 @@ ads-bazaar-shared = { workspace = true }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
+# Dev-only on purpose: tests register a real campaign-escrow contract to
+# exercise the cross-contract calls in `raise_dispute`. A regular dependency
+# would link escrow's contract exports into this contract's wasm — see
+# `src/escrow.rs` for why the client is declared by hand instead.
+ads-bazaar-campaign-escrow = { workspace = true, features = ["testutils"] }
