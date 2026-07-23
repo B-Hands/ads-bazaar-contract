@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use ads_bazaar_shared::DisputeId;
+use ads_bazaar_shared::{CampaignId, DisputeId};
 use soroban_sdk::{contracttype, Address, Env, String};
 
 use crate::error::Error;
@@ -17,6 +17,9 @@ pub enum DataKey {
     Version,
     NextDisputeId,
     Dispute(DisputeId),
+    /// The open dispute over a given campaign/creator payout, if any. Keeps
+    /// `raise_dispute` from opening a second dispute over the same payout.
+    OpenDispute(CampaignId, Address),
 }
 
 pub fn is_initialized(env: &Env) -> bool {
@@ -85,4 +88,32 @@ pub fn set_dispute(env: &Env, id: DisputeId, dispute: &Dispute) {
         PERSISTENT_LIFETIME_THRESHOLD,
         PERSISTENT_BUMP_LEDGERS,
     );
+}
+
+pub fn get_open_dispute(
+    env: &Env,
+    campaign_id: CampaignId,
+    creator: &Address,
+) -> Option<DisputeId> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::OpenDispute(campaign_id, creator.clone()))
+}
+
+pub fn set_open_dispute(env: &Env, campaign_id: CampaignId, creator: &Address, id: DisputeId) {
+    let key = DataKey::OpenDispute(campaign_id, creator.clone());
+    env.storage().persistent().set(&key, &id);
+    env.storage().persistent().extend_ttl(
+        &key,
+        PERSISTENT_LIFETIME_THRESHOLD,
+        PERSISTENT_BUMP_LEDGERS,
+    );
+}
+
+/// Clear the open-dispute marker for a payout so a fresh dispute can be
+/// raised over it later. Called once `resolve_dispute` is implemented.
+pub fn clear_open_dispute(env: &Env, campaign_id: CampaignId, creator: &Address) {
+    env.storage()
+        .persistent()
+        .remove(&DataKey::OpenDispute(campaign_id, creator.clone()));
 }

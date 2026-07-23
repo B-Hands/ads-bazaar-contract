@@ -137,6 +137,17 @@ pub struct CampaignMetadataUpdated {
     pub new_metadata: String,
 }
 
+/// Emitted by `freeze_for_dispute` when the `dispute-resolution` contract
+/// locks a creator's payout for arbitration.
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct DisputeFrozen {
+    #[topic]
+    pub campaign_id: CampaignId,
+    #[topic]
+    pub creator: Address,
+}
+
 #[contractevent]
 #[derive(Clone, Debug)]
 pub struct DisputeResolved {

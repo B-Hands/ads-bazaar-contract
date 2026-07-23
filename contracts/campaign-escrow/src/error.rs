@@ -43,4 +43,7 @@ pub enum Error {
     ApplicationsExist = 22,
     /// The metadata string must be non-empty.
     InvalidMetadata = 23,
+    /// The application is frozen pending dispute arbitration, so it can
+    /// neither be paid out nor have its proof state changed.
+    PayoutFrozen = 24,
 }

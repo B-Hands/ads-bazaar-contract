@@ -51,6 +51,17 @@ fn require_not_paused(env: &Env) -> Result<(), Error> {
     Ok(())
 }
 
+/// Reject any change to an application whose payout is frozen for dispute
+/// arbitration. This covers more than payout: the proof state is the evidence
+/// the arbiter is reviewing, so `reject_submission` clearing `proof_uri`
+/// mid-dispute would destroy it.
+fn require_not_frozen(application: &Application) -> Result<(), Error> {
+    if application.frozen {
+        return Err(Error::PayoutFrozen);
+    }
+    Ok(())
+}
+
 #[contract]
 pub struct CampaignEscrowContract;
 
@@ -265,6 +276,7 @@ impl CampaignEscrowContract {
             proof_uri: None,
             payout_amount: 0,
             proof_approved: false,
+            frozen: false,
             status: ApplicationStatus::Pending,
         };
         storage::set_application(&env, &application);
@@ -347,6 +359,7 @@ impl CampaignEscrowContract {
         }
 
         let mut application = storage::get_application(&env, campaign_id, &creator)?;
+        require_not_frozen(&application)?;
         if application.status != ApplicationStatus::Approved
             && application.status != ApplicationStatus::Rejected
         {
@@ -380,6 +393,7 @@ impl CampaignEscrowContract {
         }
 
         let mut application = storage::get_application(&env, campaign_id, &creator)?;
+        require_not_frozen(&application)?;
         if application.status != ApplicationStatus::ProofSubmitted {
             return Err(Error::InvalidStatus);
         }
@@ -404,6 +418,7 @@ impl CampaignEscrowContract {
         }
 
         let mut application = storage::get_application(&env, campaign_id, &creator)?;
+        require_not_frozen(&application)?;
         if application.status != ApplicationStatus::ProofSubmitted {
             return Err(Error::InvalidStatus);
         }
@@ -429,6 +444,7 @@ impl CampaignEscrowContract {
         let mut campaign = storage::get_campaign(&env, campaign_id)?;
 
         let mut application = storage::get_application(&env, campaign_id, &creator)?;
+        require_not_frozen(&application)?;
         if application.status != ApplicationStatus::ProofSubmitted {
             return Err(Error::SubmissionNotPayable);
         }
@@ -616,23 +632,61 @@ impl CampaignEscrowContract {
         Ok(())
     }
 
-    /// Freeze a campaign's escrow so funds cannot be released while a
+    /// Freeze one creator's escrowed payout so it cannot be claimed while a
     /// dispute is under review. Callable only by the trusted
     /// `dispute-resolution` contract set at `initialize`.
     ///
-    /// TODO(contributors): implement once `dispute-resolution`'s call
-    /// interface is finalized. This should be an authenticated
-    /// contract-to-contract call (verify `env.current_contract_address()`
-    /// caller via `require_auth` on the dispute contract's own invocation,
-    /// or restrict by checking `get_dispute_contract` matches the invoker).
-    #[allow(unused_variables)]
+    /// The freeze is scoped to a single application, not the whole campaign —
+    /// a dispute with one creator must not stall payouts to every other
+    /// creator working the same brief. It therefore does not move the
+    /// campaign into `CampaignStatus::Disputed`; that status stays reserved
+    /// for a campaign-wide halt.
+    ///
+    /// Only an application that is still settleable can be frozen: one that
+    /// was approved at some point (nonzero `payout_amount`) and has not
+    /// already been paid. That is deliberately the *only* time bound on
+    /// raising a dispute — see `dispute-resolution::raise_dispute`.
+    ///
+    /// TODO(contributors): `resolve_dispute_payout` must clear `frozen` when
+    /// it settles, otherwise a resolved application stays locked forever.
     pub fn freeze_for_dispute(
         env: Env,
         campaign_id: CampaignId,
         creator: Address,
     ) -> Result<(), Error> {
         require_not_paused(&env)?;
-        todo!("design + implement dispute freeze hook — see doc comment above")
+        // Satisfied implicitly when the dispute contract is the direct
+        // invoker, so no separate caller argument is needed.
+        storage::get_dispute_contract(&env)?.require_auth();
+
+        let campaign = storage::get_campaign(&env, campaign_id)?;
+        if campaign.status == CampaignStatus::Cancelled {
+            return Err(Error::InvalidStatus);
+        }
+
+        let mut application = storage::get_application(&env, campaign_id, &creator)?;
+        require_not_frozen(&application)?;
+        if application.status == ApplicationStatus::Paid || application.payout_amount <= 0 {
+            return Err(Error::SubmissionNotPayable);
+        }
+
+        application.frozen = true;
+        storage::set_application(&env, &application);
+        events::DisputeFrozen {
+            campaign_id,
+            creator,
+        }
+        .publish(&env);
+        Ok(())
+    }
+
+    /// Read-only lookup of the business that owns `campaign_id`.
+    ///
+    /// Exists so `dispute-resolution` can authorize a business-raised dispute
+    /// with a single cross-contract read, without having to know this
+    /// contract's full `Campaign` type.
+    pub fn get_campaign_business(env: Env, campaign_id: CampaignId) -> Result<Address, Error> {
+        Ok(storage::get_campaign(&env, campaign_id)?.business)
     }
 
     /// Apply a dispute outcome (from `dispute-resolution`) by releasing or
@@ -720,6 +774,9 @@ impl CampaignEscrowContract {
         }
 
         application.status = ApplicationStatus::Paid;
+        // Settling here overrides any arbiter freeze, so drop it rather than
+        // leaving a paid application marked frozen.
+        application.frozen = false;
         storage::set_application(&env, &application);
 
         campaign.escrow_balance -= payout_amount;
