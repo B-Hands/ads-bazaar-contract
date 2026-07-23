@@ -749,5 +749,22 @@ impl CampaignEscrowContract {
     }
 }
 
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DisputeResolution { PayCreator, RefundBusiness, Split(u32) }
+
+pub fn resolve_dispute(env: &Env, admin: &Address, campaign_id: CampaignId, _creator: &Address, _resolution: DisputeResolution) -> Result<(), Error> {
+    admin.require_auth();
+    let stored_admin: Address = storage::get_admin(env)?;
+    if *admin != stored_admin { return Err(Error::Unauthorized); }
+    let mut campaign = storage::get_campaign(env, campaign_id)?;
+    if campaign.status != CampaignStatus::Disputed { return Err(Error::InvalidStatus); }
+    campaign.status = CampaignStatus::Completed;
+    storage::set_campaign(env, &campaign);
+    storage::extend_instance_ttl(env);
+    Ok(())
+}
+
 #[cfg(test)]
 mod test;
+

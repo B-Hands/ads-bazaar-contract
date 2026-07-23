@@ -33,6 +33,8 @@ pub enum CampaignStatus {
     Completed,
     /// Cancelled before completion; any escrowed funds refunded to the business.
     Cancelled,
+    /// Campaign has been flagged for dispute; funds are locked pending admin resolution.
+    Disputed,
 }
 
 /// Status of a single creator's application to a campaign.
@@ -85,3 +87,4 @@ pub struct PayoutAsset {
     /// trusted for any on-chain logic — purely informational.
     pub symbol: soroban_sdk::String,
 }
+
