@@ -1143,3 +1143,171 @@ mod test_update_metadata {
         assert_eq!(result, Err(Ok(Error::InvalidStatus)));
     }
 }
+
+mod test_resolve_dispute {
+    use super::test_helpers::*;
+    use crate::{DisputeResolution, Error};
+    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::token::Client as TokenClient;
+    use soroban_sdk::Address;
+
+    #[test]
+    fn pay_creator_resolution_pays_creator_minus_fee() {
+        let (env, contract_id) = setup_env();
+        let (client, admin, _dispute, business, token) = bootstrap(&env, &contract_id, 50);
+        let token_client = TokenClient::new(&env, &token);
+
+        let payout: i128 = 1_000_000;
+        let id = create_funded_campaign(&env, &client, &business, &token, payout, 5);
+        let creator = Address::generate(&env);
+        client.apply_to_campaign(&creator, &id, &soroban_sdk::String::from_str(&env, "pitch"));
+        client.approve_creator(&business, &id, &creator, &payout);
+
+        let creator_before = token_client.balance(&creator);
+        let business_before = token_client.balance(&business);
+        let treasury_before = token_client.balance(&admin);
+
+        client.resolve_dispute(&admin, &id, &creator, &DisputeResolution::PayCreator);
+
+        let fee = payout * 50 / ads_bazaar_shared::BASIS_POINTS_DENOMINATOR;
+        assert_eq!(
+            token_client.balance(&creator),
+            creator_before + payout - fee
+        );
+        assert_eq!(token_client.balance(&admin), treasury_before + fee);
+        // Business's share (nothing for this creator's slot) leaves their
+        // balance unchanged from before resolution.
+        assert_eq!(token_client.balance(&business), business_before);
+
+        let application = client.get_application(&id, &creator);
+        assert_eq!(
+            application.status,
+            ads_bazaar_shared::ApplicationStatus::Paid
+        );
+    }
+
+    #[test]
+    fn refund_business_resolution_returns_full_amount_no_fee() {
+        let (env, contract_id) = setup_env();
+        let (client, admin, _dispute, business, token) = bootstrap(&env, &contract_id, 50);
+        let token_client = TokenClient::new(&env, &token);
+
+        let payout: i128 = 1_000_000;
+        let id = create_funded_campaign(&env, &client, &business, &token, payout, 5);
+        let creator = Address::generate(&env);
+        client.apply_to_campaign(&creator, &id, &soroban_sdk::String::from_str(&env, "pitch"));
+        client.approve_creator(&business, &id, &creator, &payout);
+
+        let business_before = token_client.balance(&business);
+        let creator_before = token_client.balance(&creator);
+        let treasury_before = token_client.balance(&admin);
+
+        client.resolve_dispute(&admin, &id, &creator, &DisputeResolution::RefundBusiness);
+
+        // Full amount, no fee deducted.
+        assert_eq!(token_client.balance(&business), business_before + payout);
+        assert_eq!(token_client.balance(&creator), creator_before);
+        assert_eq!(token_client.balance(&admin), treasury_before);
+    }
+
+    #[test]
+    fn split_resolution_divides_correctly() {
+        let (env, contract_id) = setup_env();
+        let (client, admin, _dispute, business, token) = bootstrap(&env, &contract_id, 50);
+        let token_client = TokenClient::new(&env, &token);
+
+        let payout: i128 = 1_000_000;
+        let id = create_funded_campaign(&env, &client, &business, &token, payout, 5);
+        let creator = Address::generate(&env);
+        client.apply_to_campaign(&creator, &id, &soroban_sdk::String::from_str(&env, "pitch"));
+        client.approve_creator(&business, &id, &creator, &payout);
+
+        let business_before = token_client.balance(&business);
+        let creator_before = token_client.balance(&creator);
+
+        // 60% to creator, 40% to business.
+        client.resolve_dispute(&admin, &id, &creator, &DisputeResolution::Split(6_000));
+
+        let creator_gross = payout * 6_000 / 10_000;
+        let fee = creator_gross * 50 / ads_bazaar_shared::BASIS_POINTS_DENOMINATOR;
+        let creator_net = creator_gross - fee;
+        let business_amount = payout - creator_gross;
+
+        assert_eq!(token_client.balance(&creator), creator_before + creator_net);
+        assert_eq!(
+            token_client.balance(&business),
+            business_before + business_amount
+        );
+    }
+
+    #[test]
+    fn non_admin_cannot_resolve_dispute() {
+        let (env, contract_id) = setup_env();
+        let (client, _admin, _dispute, business, token) = bootstrap(&env, &contract_id, 50);
+
+        let payout: i128 = 1_000_000;
+        let id = create_funded_campaign(&env, &client, &business, &token, payout, 5);
+        let creator = Address::generate(&env);
+        client.apply_to_campaign(&creator, &id, &soroban_sdk::String::from_str(&env, "pitch"));
+        client.approve_creator(&business, &id, &creator, &payout);
+
+        let stranger = Address::generate(&env);
+        let result =
+            client.try_resolve_dispute(&stranger, &id, &creator, &DisputeResolution::PayCreator);
+        assert_eq!(result, Err(Ok(Error::Unauthorized)));
+    }
+
+    #[test]
+    fn resolve_dispute_rejects_already_paid() {
+        let (env, contract_id) = setup_env();
+        let (client, admin, _dispute, business, token) = bootstrap(&env, &contract_id, 50);
+
+        // Two creators, so the campaign stays Active (escrow_balance > 0)
+        // after the first one claims — isolating the already-Paid
+        // application check from the separate Completed-campaign check.
+        let payout: i128 = 1_000_000;
+        let id = create_funded_campaign(&env, &client, &business, &token, payout * 2, 5);
+        let creator = Address::generate(&env);
+        let other_creator = Address::generate(&env);
+        client.apply_to_campaign(&creator, &id, &soroban_sdk::String::from_str(&env, "pitch"));
+        client.approve_creator(&business, &id, &creator, &payout);
+        client.apply_to_campaign(
+            &other_creator,
+            &id,
+            &soroban_sdk::String::from_str(&env, "pitch"),
+        );
+        client.approve_creator(&business, &id, &other_creator, &payout);
+        client.submit_proof(&creator, &id, &soroban_sdk::String::from_str(&env, "proof"));
+        client.approve_submission(&business, &id, &creator);
+        client.claim_payment(&creator, &id);
+
+        let result =
+            client.try_resolve_dispute(&admin, &id, &creator, &DisputeResolution::PayCreator);
+        assert_eq!(result, Err(Ok(Error::SubmissionNotPayable)));
+    }
+
+    #[test]
+    fn resolve_dispute_works_on_rejected_application() {
+        let (env, contract_id) = setup_env();
+        let (client, admin, _dispute, business, token) = bootstrap(&env, &contract_id, 50);
+        let token_client = TokenClient::new(&env, &token);
+
+        let payout: i128 = 1_000_000;
+        let id = create_funded_campaign(&env, &client, &business, &token, payout, 5);
+        let creator = Address::generate(&env);
+        client.apply_to_campaign(&creator, &id, &soroban_sdk::String::from_str(&env, "pitch"));
+        client.approve_creator(&business, &id, &creator, &payout);
+        client.submit_proof(&creator, &id, &soroban_sdk::String::from_str(&env, "proof"));
+        // Business rejects — a natural point of disagreement to escalate.
+        client.reject_submission(&business, &id, &creator);
+
+        let creator_before = token_client.balance(&creator);
+        client.resolve_dispute(&admin, &id, &creator, &DisputeResolution::PayCreator);
+
+        let fee = payout * 50 / ads_bazaar_shared::BASIS_POINTS_DENOMINATOR;
+        assert_eq!(
+            token_client.balance(&creator),
+            creator_before + payout - fee
+        );
+    }
+}

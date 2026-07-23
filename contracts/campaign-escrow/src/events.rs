@@ -136,3 +136,14 @@ pub struct CampaignMetadataUpdated {
     pub business: Address,
     pub new_metadata: String,
 }
+
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct DisputeResolved {
+    #[topic]
+    pub campaign_id: CampaignId,
+    #[topic]
+    pub creator: Address,
+    pub creator_amount: i128,
+    pub business_amount: i128,
+}

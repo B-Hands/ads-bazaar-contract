@@ -18,7 +18,7 @@ mod storage;
 mod types;
 
 pub use error::Error;
-pub use types::{Application, Campaign, ProtocolConfig};
+pub use types::{Application, Campaign, DisputeResolution, ProtocolConfig};
 
 use ads_bazaar_shared::{ApplicationStatus, CampaignId, CampaignStatus, PayoutAsset};
 use soroban_sdk::{contract, contractimpl, token, Address, BytesN, Env, String};
@@ -650,6 +650,95 @@ impl CampaignEscrowContract {
         todo!("design + implement dispute payout resolution — see doc comment above")
     }
 
+    /// Admin-resolved settlement for a single creator's committed-but-not-
+    /// yet-paid application, as a simplified interim path alongside the
+    /// arbiter-resolved `dispute-resolution` contract (`resolve_dispute_payout`
+    /// above is the intended integration point for that contract once it's
+    /// implemented; this is a separate admin-only shortcut that works today
+    /// without it). Admin-only.
+    ///
+    /// Requires an application with a nonzero `payout_amount` that hasn't
+    /// already been paid — i.e. one that was approved via `approve_creator`
+    /// at some point, regardless of its current `Approved` / `ProofSubmitted`
+    /// / `Rejected` state. Moves funds immediately per `resolution` (see
+    /// `DisputeResolution`) and marks the application `Paid`.
+    pub fn resolve_dispute(
+        env: Env,
+        admin: Address,
+        campaign_id: CampaignId,
+        creator: Address,
+        resolution: DisputeResolution,
+    ) -> Result<(), Error> {
+        require_not_paused(&env)?;
+        require_admin(&env, &admin)?;
+
+        let mut campaign = storage::get_campaign(&env, campaign_id)?;
+        if campaign.status == CampaignStatus::Cancelled
+            || campaign.status == CampaignStatus::Completed
+        {
+            return Err(Error::InvalidStatus);
+        }
+
+        let mut application = storage::get_application(&env, campaign_id, &creator)?;
+        if application.status == ApplicationStatus::Paid || application.payout_amount <= 0 {
+            return Err(Error::SubmissionNotPayable);
+        }
+
+        let payout_amount = application.payout_amount;
+        let fee_bps = campaign.fee_bps;
+        let (creator_gross, business_amount) = match resolution {
+            DisputeResolution::PayCreator => (payout_amount, 0),
+            DisputeResolution::RefundBusiness => (0, payout_amount),
+            DisputeResolution::Split(bps) => {
+                if !(0..=ads_bazaar_shared::BASIS_POINTS_DENOMINATOR).contains(&bps) {
+                    return Err(Error::InvalidAmount);
+                }
+                let creator_gross = payout_amount.checked_mul(bps).ok_or(Error::InvalidAmount)?
+                    / ads_bazaar_shared::BASIS_POINTS_DENOMINATOR;
+                (creator_gross, payout_amount - creator_gross)
+            }
+        };
+
+        // Fee only ever applies to the creator's gross share — a full
+        // RefundBusiness (creator_gross == 0) correctly incurs no fee.
+        let fee = creator_gross
+            .checked_mul(fee_bps)
+            .ok_or(Error::InvalidAmount)?
+            / ads_bazaar_shared::BASIS_POINTS_DENOMINATOR;
+        let creator_net = creator_gross.checked_sub(fee).ok_or(Error::InvalidAmount)?;
+
+        let token = token::Client::new(&env, &campaign.asset.token);
+        let contract = env.current_contract_address();
+        if fee > 0 {
+            token.transfer(&contract, &storage::get_treasury(&env)?, &fee);
+        }
+        if creator_net > 0 {
+            token.transfer(&contract, &creator, &creator_net);
+        }
+        if business_amount > 0 {
+            token.transfer(&contract, &campaign.business, &business_amount);
+        }
+
+        application.status = ApplicationStatus::Paid;
+        storage::set_application(&env, &application);
+
+        campaign.escrow_balance -= payout_amount;
+        campaign.committed_payouts -= payout_amount;
+        if campaign.escrow_balance == 0 {
+            campaign.status = CampaignStatus::Completed;
+        }
+        storage::set_campaign(&env, &campaign);
+
+        events::DisputeResolved {
+            campaign_id,
+            creator,
+            creator_amount: creator_net,
+            business_amount,
+        }
+        .publish(&env);
+        Ok(())
+    }
+
     /// Update the metadata URI of a campaign. Only the campaign's business
     /// may call this, and only when no creator has applied yet — once
     /// creators have applied the brief locks to protect applicant trust.
@@ -749,22 +838,5 @@ impl CampaignEscrowContract {
     }
 }
 
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum DisputeResolution { PayCreator, RefundBusiness, Split(u32) }
-
-pub fn resolve_dispute(env: &Env, admin: &Address, campaign_id: CampaignId, _creator: &Address, _resolution: DisputeResolution) -> Result<(), Error> {
-    admin.require_auth();
-    let stored_admin: Address = storage::get_admin(env)?;
-    if *admin != stored_admin { return Err(Error::Unauthorized); }
-    let mut campaign = storage::get_campaign(env, campaign_id)?;
-    if campaign.status != CampaignStatus::Disputed { return Err(Error::InvalidStatus); }
-    campaign.status = CampaignStatus::Completed;
-    storage::set_campaign(env, &campaign);
-    storage::extend_instance_ttl(env);
-    Ok(())
-}
-
 #[cfg(test)]
 mod test;
-

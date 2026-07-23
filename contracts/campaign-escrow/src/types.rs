@@ -64,3 +64,23 @@ pub struct ProtocolConfig {
     pub treasury: Address,
     pub fee_bps: i128,
 }
+
+/// Admin-chosen outcome for `resolve_dispute`, settling a creator's
+/// committed-but-unsettled payout on a single application.
+///
+/// This is a simplified, admin-resolved path that exists alongside the
+/// separate arbiter-resolved `dispute-resolution` contract (see
+/// `ads_bazaar_shared::DisputeOutcome` and `resolve_dispute_payout` below)
+/// rather than replacing it — which of the two a given campaign actually
+/// uses is still an open product question (see `docs/ARCHITECTURE.md`).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DisputeResolution {
+    /// Creator receives their full committed payout, minus the platform fee.
+    PayCreator,
+    /// Business receives the full committed amount back; creator gets nothing.
+    RefundBusiness,
+    /// Creator receives `bps / 10_000` of the committed payout (minus fee on
+    /// that portion); business receives the remainder.
+    Split(i128),
+}

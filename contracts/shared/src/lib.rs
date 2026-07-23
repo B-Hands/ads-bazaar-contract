@@ -87,4 +87,3 @@ pub struct PayoutAsset {
     /// trusted for any on-chain logic — purely informational.
     pub symbol: soroban_sdk::String,
 }
-
