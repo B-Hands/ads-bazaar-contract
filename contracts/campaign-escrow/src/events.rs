@@ -8,7 +8,7 @@
 #![allow(dead_code)]
 
 use ads_bazaar_shared::CampaignId;
-use soroban_sdk::{contractevent, Address, BytesN};
+use soroban_sdk::{contractevent, Address, BytesN, String};
 
 #[contractevent]
 #[derive(Clone, Debug)]
@@ -126,4 +126,13 @@ pub struct TreasuryUpdated {
     #[topic]
     pub admin: Address,
     pub new_treasury: Address,
+}
+
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct CampaignMetadataUpdated {
+    #[topic]
+    pub campaign_id: CampaignId,
+    pub business: Address,
+    pub new_metadata: String,
 }

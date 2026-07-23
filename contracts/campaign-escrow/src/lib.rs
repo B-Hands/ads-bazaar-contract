@@ -268,6 +268,7 @@ impl CampaignEscrowContract {
             status: ApplicationStatus::Pending,
         };
         storage::set_application(&env, &application);
+        storage::add_campaign_applicant(&env, campaign_id, &creator);
         events::CreatorApplied {
             campaign_id,
             creator,
@@ -647,6 +648,47 @@ impl CampaignEscrowContract {
     ) -> Result<(), Error> {
         require_not_paused(&env)?;
         todo!("design + implement dispute payout resolution — see doc comment above")
+    }
+
+    /// Update the metadata URI of a campaign. Only the campaign's business
+    /// may call this, and only when no creator has applied yet — once
+    /// creators have applied the brief locks to protect applicant trust.
+    ///
+    /// `new_metadata` must be a non-empty string. Does not move funds or
+    /// change the campaign's status.
+    pub fn update_campaign_metadata(
+        env: Env,
+        campaign_id: CampaignId,
+        business: Address,
+        new_metadata: String,
+    ) -> Result<(), Error> {
+        require_not_paused(&env)?;
+        business.require_auth();
+        let mut campaign = storage::get_campaign(&env, campaign_id)?;
+        if campaign.business != business {
+            return Err(Error::NotCampaignOwner);
+        }
+        if campaign.status == CampaignStatus::Cancelled
+            || campaign.status == CampaignStatus::Completed
+        {
+            return Err(Error::InvalidStatus);
+        }
+        if storage::has_campaign_applicants(&env, campaign_id) {
+            return Err(Error::ApplicationsExist);
+        }
+        if new_metadata.is_empty() {
+            return Err(Error::InvalidMetadata);
+        }
+
+        campaign.metadata_uri = new_metadata.clone();
+        storage::set_campaign(&env, &campaign);
+        events::CampaignMetadataUpdated {
+            campaign_id,
+            business,
+            new_metadata,
+        }
+        .publish(&env);
+        Ok(())
     }
 
     /// Read-only lookup of a campaign's current state.

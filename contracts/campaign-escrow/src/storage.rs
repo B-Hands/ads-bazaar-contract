@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use ads_bazaar_shared::CampaignId;
-use soroban_sdk::{contracttype, Address, Env, String};
+use soroban_sdk::{contracttype, Address, Env, String, Vec};
 
 use crate::error::Error;
 use crate::types::{Application, Campaign};
@@ -34,6 +34,10 @@ pub enum DataKey {
     /// Whether the contract is currently paused. See `require_not_paused`
     /// and `pause`/`unpause` in `lib.rs`.
     Paused,
+    /// Ordered list of creator addresses that have applied to a campaign.
+    /// Used by `update_campaign_metadata` to enforce that the brief is
+    /// locked once any creator has applied.
+    CampaignApplicants(CampaignId),
 }
 
 pub fn is_initialized(env: &Env) -> bool {
@@ -167,4 +171,32 @@ pub fn get_paused(env: &Env) -> bool {
 
 pub fn set_paused(env: &Env, paused: bool) {
     env.storage().instance().set(&DataKey::Paused, &paused);
+}
+
+/// Append `creator` to the applicants list for `campaign_id`. Called from
+/// `apply_to_campaign` so `update_campaign_metadata` can lock the brief
+/// once at least one creator has applied.
+pub fn add_campaign_applicant(env: &Env, campaign_id: CampaignId, creator: &Address) {
+    let key = DataKey::CampaignApplicants(campaign_id);
+    let mut applicants: Vec<Address> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or(Vec::new(env));
+    applicants.push_back(creator.clone());
+    env.storage().persistent().set(&key, &applicants);
+    env.storage().persistent().extend_ttl(
+        &key,
+        PERSISTENT_LIFETIME_THRESHOLD,
+        PERSISTENT_BUMP_LEDGERS,
+    );
+}
+
+/// Return whether any creator has applied to `campaign_id`.
+pub fn has_campaign_applicants(env: &Env, campaign_id: CampaignId) -> bool {
+    let applicants: Option<Vec<Address>> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::CampaignApplicants(campaign_id));
+    applicants.is_some_and(|v| !v.is_empty())
 }

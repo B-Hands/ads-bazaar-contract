@@ -925,3 +925,221 @@ mod admin_updates {
         assert_eq!(result, Err(Ok(Error::FeeTooHigh)));
     }
 }
+
+mod test_update_metadata {
+    use super::test_helpers::*;
+    use crate::Error;
+    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::{Address, String};
+
+    #[test]
+    fn update_metadata_success() {
+        let (env, contract_id) = setup_env();
+        let (client, _admin, _dispute, business, token) = bootstrap(&env, &contract_id, 50);
+
+        let now = env.ledger().timestamp();
+        let asset = usdc(&env, &token);
+        let id = client.create_campaign(
+            &business,
+            &asset,
+            &10_000_000,
+            &5,
+            &(now + 86_400),
+            &(now + 604_800),
+            &String::from_str(&env, "ipfs://original-brief"),
+        );
+
+        client.update_campaign_metadata(
+            &id,
+            &business,
+            &String::from_str(&env, "ipfs://updated-brief"),
+        );
+
+        let campaign = client.get_campaign(&id);
+        assert_eq!(
+            campaign.metadata_uri,
+            String::from_str(&env, "ipfs://updated-brief")
+        );
+    }
+
+    #[test]
+    fn update_metadata_after_funding() {
+        let (env, contract_id) = setup_env();
+        let (client, _admin, _dispute, business, token) = bootstrap(&env, &contract_id, 50);
+
+        // Create and fund — still zero applicants, so metadata update
+        // should succeed when status is Funded.
+        let id = create_funded_campaign(&env, &client, &business, &token, 10_000_000, 5);
+
+        client.update_campaign_metadata(
+            &id,
+            &business,
+            &String::from_str(&env, "ipfs://updated-brief"),
+        );
+
+        let campaign = client.get_campaign(&id);
+        assert_eq!(
+            campaign.metadata_uri,
+            String::from_str(&env, "ipfs://updated-brief")
+        );
+    }
+
+    #[test]
+    fn not_campaign_owner_cannot_update_metadata() {
+        let (env, contract_id) = setup_env();
+        let (client, _admin, _dispute, business, token) = bootstrap(&env, &contract_id, 50);
+
+        let now = env.ledger().timestamp();
+        let asset = usdc(&env, &token);
+        let id = client.create_campaign(
+            &business,
+            &asset,
+            &10_000_000,
+            &5,
+            &(now + 86_400),
+            &(now + 604_800),
+            &String::from_str(&env, "ipfs://original-brief"),
+        );
+
+        let stranger = Address::generate(&env);
+        let result = client.try_update_campaign_metadata(
+            &id,
+            &stranger,
+            &String::from_str(&env, "ipfs://hijacked-brief"),
+        );
+        assert_eq!(result, Err(Ok(Error::NotCampaignOwner)));
+    }
+
+    #[test]
+    fn applications_exist_blocks_metadata_update() {
+        let (env, contract_id) = setup_env();
+        let (client, _admin, _dispute, business, token) = bootstrap(&env, &contract_id, 50);
+
+        let id = create_funded_campaign(&env, &client, &business, &token, 10_000_000, 5);
+
+        let creator = Address::generate(&env);
+        client.apply_to_campaign(&creator, &id, &String::from_str(&env, "pitch"));
+
+        let result = client.try_update_campaign_metadata(
+            &id,
+            &business,
+            &String::from_str(&env, "ipfs://updated-brief"),
+        );
+        assert_eq!(result, Err(Ok(Error::ApplicationsExist)));
+    }
+
+    #[test]
+    fn empty_metadata_rejected() {
+        let (env, contract_id) = setup_env();
+        let (client, _admin, _dispute, business, token) = bootstrap(&env, &contract_id, 50);
+
+        let now = env.ledger().timestamp();
+        let asset = usdc(&env, &token);
+        let id = client.create_campaign(
+            &business,
+            &asset,
+            &10_000_000,
+            &5,
+            &(now + 86_400),
+            &(now + 604_800),
+            &String::from_str(&env, "ipfs://original-brief"),
+        );
+
+        let result =
+            client.try_update_campaign_metadata(&id, &business, &String::from_str(&env, ""));
+        assert_eq!(result, Err(Ok(Error::InvalidMetadata)));
+    }
+
+    #[test]
+    fn cancelled_campaign_rejects_metadata_update() {
+        let (env, contract_id) = setup_env();
+        let (client, _admin, _dispute, business, token) = bootstrap(&env, &contract_id, 50);
+
+        let id = create_funded_campaign(&env, &client, &business, &token, 10_000_000, 5);
+        client.cancel_campaign(&business, &id);
+
+        let result = client.try_update_campaign_metadata(
+            &id,
+            &business,
+            &String::from_str(&env, "ipfs://updated-brief"),
+        );
+        assert_eq!(result, Err(Ok(Error::InvalidStatus)));
+    }
+
+    #[test]
+    fn metadata_not_changed_on_failure() {
+        let (env, contract_id) = setup_env();
+        let (client, _admin, _dispute, business, token) = bootstrap(&env, &contract_id, 50);
+
+        let id = create_funded_campaign(&env, &client, &business, &token, 10_000_000, 5);
+
+        let creator = Address::generate(&env);
+        client.apply_to_campaign(&creator, &id, &String::from_str(&env, "pitch"));
+
+        // Attempt update fails because an applicant exists.
+        let _ = client.try_update_campaign_metadata(
+            &id,
+            &business,
+            &String::from_str(&env, "ipfs://should-not-persist"),
+        );
+
+        // Metadata must still be the original.
+        let campaign = client.get_campaign(&id);
+        assert_eq!(
+            campaign.metadata_uri,
+            String::from_str(&env, "ipfs://brief")
+        );
+    }
+
+    #[test]
+    fn metadata_update_blocked_when_paused() {
+        let (env, contract_id) = setup_env();
+        let (client, admin, _dispute, business, token) = bootstrap(&env, &contract_id, 50);
+
+        let now = env.ledger().timestamp();
+        let asset = usdc(&env, &token);
+        let id = client.create_campaign(
+            &business,
+            &asset,
+            &10_000_000,
+            &5,
+            &(now + 86_400),
+            &(now + 604_800),
+            &String::from_str(&env, "ipfs://original-brief"),
+        );
+
+        client.pause(&admin);
+
+        let result = client.try_update_campaign_metadata(
+            &id,
+            &business,
+            &String::from_str(&env, "ipfs://updated-brief"),
+        );
+        assert_eq!(result, Err(Ok(Error::ContractPaused)));
+    }
+
+    #[test]
+    fn completed_campaign_rejects_metadata_update() {
+        let (env, contract_id) = setup_env();
+        let (client, _admin, _dispute, business, token) = bootstrap(&env, &contract_id, 0);
+        let _token_client = soroban_sdk::token::Client::new(&env, &token);
+
+        let payout: i128 = 1_000_000;
+        let id = create_funded_campaign(&env, &client, &business, &token, payout, 1);
+
+        let creator = Address::generate(&env);
+        client.apply_to_campaign(&creator, &id, &String::from_str(&env, "pitch"));
+        client.approve_creator(&business, &id, &creator, &payout);
+        client.submit_proof(&creator, &id, &String::from_str(&env, "proof"));
+        client.approve_submission(&business, &id, &creator);
+        client.claim_payment(&creator, &id);
+
+        // Campaign is now Completed — metadata update should be rejected.
+        let result = client.try_update_campaign_metadata(
+            &id,
+            &business,
+            &String::from_str(&env, "ipfs://updated-brief"),
+        );
+        assert_eq!(result, Err(Ok(Error::InvalidStatus)));
+    }
+}

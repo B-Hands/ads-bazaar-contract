@@ -38,4 +38,9 @@ pub enum Error {
     InvalidDeadlineOrder = 20,
     /// The updated fee is too high (exceeds the 1000 bps maximum).
     FeeTooHigh = 21,
+    /// At least one creator has already applied to this campaign, so the
+    /// campaign brief / metadata cannot be changed.
+    ApplicationsExist = 22,
+    /// The metadata string must be non-empty.
+    InvalidMetadata = 23,
 }
