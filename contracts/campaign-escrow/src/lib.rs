@@ -125,7 +125,11 @@ impl CampaignEscrowContract {
             return Err(Error::FeeTooHigh);
         }
         storage::set_fee_bps(&env, new_fee_bps);
-        events::FeeUpdated { admin, new_fee_bps }.publish(&env);
+        events::FeeUpdated {
+            admin,
+            new_fee_bps: new_fee_bps as u32,
+        }
+        .publish(&env);
         Ok(())
     }
 
@@ -346,7 +350,9 @@ impl CampaignEscrowContract {
         }
 
         let mut application = storage::get_application(&env, campaign_id, &creator)?;
-        if application.status != ApplicationStatus::Approved {
+        if application.status != ApplicationStatus::Approved
+            && application.status != ApplicationStatus::Rejected
+        {
             return Err(Error::InvalidStatus);
         }
 
@@ -406,8 +412,13 @@ impl CampaignEscrowContract {
         }
         application.proof_uri = None;
         application.proof_approved = false;
-        application.status = ApplicationStatus::Approved;
+        application.status = ApplicationStatus::Rejected;
         storage::set_application(&env, &application);
+        events::SubmissionRejected {
+            campaign_id,
+            creator,
+        }
+        .publish(&env);
         Ok(())
     }
 

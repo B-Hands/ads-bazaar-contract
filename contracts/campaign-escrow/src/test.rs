@@ -344,6 +344,10 @@ mod test_happy_path {
         );
         // Business rejects the proof.
         client.reject_submission(&business, &id, &creator);
+
+        // Verify it was marked as Rejected
+        let app = client.get_application(&id, &creator);
+        assert_eq!(app.status, ads_bazaar_shared::ApplicationStatus::Rejected);
         // Creator resubmits.
         client.submit_proof(
             &creator,
@@ -835,9 +839,6 @@ mod admin_updates {
 
         let creator = Address::generate(&env);
         let gross: i128 = 1_000_000;
-        // Created while the global fee is still 50 bps — `fee_bps` is
-        // snapshotted onto the campaign here (see #12) and must not change
-        // even after the fee is updated below.
         let id = create_funded_campaign(&env, &client, &business, &token, 10_000_000, 5);
 
         // Update fee from 50 to 200 bps

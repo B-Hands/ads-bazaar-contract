@@ -56,6 +56,15 @@ pub struct ProofSubmitted {
 
 #[contractevent]
 #[derive(Clone, Debug)]
+pub struct SubmissionRejected {
+    #[topic]
+    pub campaign_id: CampaignId,
+    #[topic]
+    pub creator: Address,
+}
+
+#[contractevent]
+#[derive(Clone, Debug)]
 pub struct PaymentReleased {
     #[topic]
     pub campaign_id: CampaignId,
@@ -108,7 +117,7 @@ pub struct ContractUpgraded {
 pub struct FeeUpdated {
     #[topic]
     pub admin: Address,
-    pub new_fee_bps: i128,
+    pub new_fee_bps: u32,
 }
 
 #[contractevent]
